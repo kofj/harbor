@@ -6,6 +6,8 @@ WORKDIR /build_dir
 
 ARG npm_registry=https://registry.npmjs.org
 
+RUN sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python-yaml=3.12-1
 

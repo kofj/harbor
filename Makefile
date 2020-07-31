@@ -75,14 +75,14 @@ CHECKENVCMD=checkenv.sh
 REGISTRYSERVER=
 REGISTRYPROJECTNAME=goharbor
 DEVFLAG=true
-NOTARYFLAG=false
-CLAIRFLAG=false
-TRIVYFLAG=false
+NOTARYFLAG=true
+CLAIRFLAG=true
+TRIVYFLAG=true
 HTTPPROXY=
 BUILDBIN=false
-NPM_REGISTRY=https://registry.npmjs.org
+NPM_REGISTRY=https://mirrors.cloud.tencent.com/npm/
 # enable/disable chart repo supporting
-CHARTFLAG=false
+CHARTFLAG=true
 BUILDTARGET=build
 GEN_TLS=
 
