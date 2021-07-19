@@ -147,7 +147,7 @@ Filter Repo
 
 Delete Repo
     [Arguments]  ${pro_name}  ${repo_name}
-    ${element_repo_checkbox}=  Set Variable  xpath=//clr-dg-row[contains(.,'${pro_name}/${repo_name}')]//clr-checkbox-wrapper//label
+    ${element_repo_checkbox}=  Set Variable  xpath=//clr-dg-row[contains(.,'${pro_name}/${repo_name}')]//div[contains(@class,'clr-checkbox-wrapper')]//label
     Filter Repo  ${pro_name}  ${repo_name}
     Retry Double Keywords When Error  Retry Element Click  ${element_repo_checkbox}  Wait Until Element Is Visible And Enabled  ${repo_delete_btn}
     Retry Double Keywords When Error  Retry Element Click  ${repo_delete_btn}  Wait Until Element Is Visible And Enabled  ${delete_confirm_btn}
@@ -165,7 +165,7 @@ Delete Repo on CardView
 Delete Project
     [Arguments]  ${projectname}
     Navigate To Projects
-    Retry Element Click  xpath=//clr-dg-row[contains(.,'${projectname}')]//clr-checkbox-wrapper//label
+    Retry Element Click  xpath=//clr-dg-row[contains(.,'${projectname}')]//div[contains(@class,'clr-checkbox-wrapper')]//label
     Retry Element Click  xpath=//*[@id='delete-project']
     Retry Element Click  //clr-modal//button[contains(.,'DELETE')]
     Sleep  1
@@ -254,7 +254,7 @@ Click Index Achieve
     Retry Element Click  //artifact-list-tab//clr-datagrid//clr-dg-row[contains(.,'sha256') and contains(.,'${tag_name}')]//clr-dg-cell[1]//clr-tooltip//a
 
 Go Into Index And Contain Artifacts
-    [Arguments]  ${tag_name}  ${total_artifact_count}=3  ${archive_count}=0
+    [Arguments]  ${tag_name}  ${total_artifact_count}=3  ${archive_count}=0  ${return_immediately}=${false}
     Retry Double Keywords When Error  Click Index Achieve  ${tag_name}  Page Should Contain Element  ${tag_table_column_os_arch}
     FOR  ${n}  IN RANGE  1  10
         ${out1}  Run Keyword And Ignore Error  Page Should Contain Element  ${artifact_rows}  limit=${total_artifact_count}
@@ -262,7 +262,8 @@ Go Into Index And Contain Artifacts
         Exit For Loop If  '${out1[0]}'=='PASS' and '${out2[0]}'=='PASS'
         Sleep  3
     END
-    Run Keyword If  '${out1[0]}'=='FAIL' or '${out2[0]}'=='FAIL'  Capture Page Screenshot
+    ${result}=  Set Variable If  '${out1[0]}'=='FAIL' or '${out2[0]}'=='FAIL'  FAIL  PASS
+    Return From Keyword If  '${return_immediately}' == '${true}'  ${result}
     Should Be Equal As Strings  '${out1[0]}'  'PASS'
     Should Be Equal As Strings  '${out2[0]}'  'PASS'
 
@@ -337,27 +338,27 @@ Retry Get Statics
     [Return]  ${ret}
 
 Get Statics Private Repo
-    ${privaterepo}=  Retry Get Statics  //projects/div/div/div[1]/div/statistics-panel/div/div[2]/div[1]/div[2]/div[2]/statistics/div/span[1]
+    ${privaterepo}=  Retry Get Statics  ${project_statistics_private_repository_icon}
     [Return]  ${privaterepo}
 
 Get Statics Private Project
-    ${privateproj}=  Retry Get Statics  //projects/div/div/div[1]/div/statistics-panel/div/div[2]/div[1]/div[2]/div[1]/statistics/div/span[1]
+    ${privateproj}=  Retry Get Statics  //projects/div/div/div[1]/div/statistics-panel/div/div[1]/div/div[1]/div[2]
     [Return]  ${privateproj}
 
 Get Statics Public Repo
-    ${publicrepo}=  Retry Get Statics  //projects/div/div/div[1]/div/statistics-panel/div/div[2]/div[1]/div[3]/div[2]/statistics/div/span[1]
+    ${publicrepo}=  Retry Get Statics  //projects/div/div/div[1]/div/statistics-panel/div/div[1]/div/div[2]/div[2]
     [Return]  ${publicrepo}
 
 Get Statics Public Project
-    ${publicproj}=  Retry Get Statics  //projects/div/div/div[1]/div/statistics-panel/div/div[2]/div[1]/div[3]/div[1]/statistics/div/span[1]
+    ${publicproj}=  Retry Get Statics  //projects/div/div/div[1]/div/statistics-panel/div/div[1]/div/div[2]/div[2]
     [Return]  ${publicproj}
 
 Get Statics Total Repo
-    ${totalrepo}=  Retry Get Statics  //projects/div/div/div[1]/div/statistics-panel/div/div[2]/div[1]/div[4]/div[2]/statistics/div/span[1]
+    ${totalrepo}=  Retry Get Statics  //projects/div/div/div[1]/div/statistics-panel/div/div[2]/div/div[3]/div[2]
     [Return]  ${totalrepo}
 
 Get Statics Total Project
-    ${totalproj}=  Retry Get Statics  //projects/div/div/div[1]/div/statistics-panel/div/div[2]/div[1]/div[4]/div[1]/statistics/div/span[1]
+    ${totalproj}=  Retry Get Statics  //projects/div/div/div[1]/div/statistics-panel/div/div[1]/div/div[3]/div[2]
     [Return]  ${totalproj}
 
 Input Count Quota

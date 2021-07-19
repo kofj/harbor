@@ -42,7 +42,7 @@ Sign In Harbor With OIDC User
     Run Keyword If  '${isVisible}' == 'True'  Run Keywords  Retry Text Input    ${oidc_username_input}    ${username}  AND  Retry Element Click    ${save_btn}
     Retry Wait Element  ${head_username}
     Capture Page Screenshot
-    ${name_display}=  Get Text  xpath=//harbor-app/harbor-shell/clr-main-container/navigator/clr-header//clr-dropdown[2]//button/span
+    ${name_display}=  Get Text  ${header_user}
     Run Keyword If  '${username_claim}' == 'email'  Should Be Equal As Strings  ${name_display}  ${full_name}
     ...  ELSE    Should Be Equal As Strings  ${name_display}  ${username}
 
@@ -65,3 +65,15 @@ Generate And Return Secret
     Retry Wait Until Page Contains  Cli secret setting is successful
     ${secret}=  Get Secrete By API  ${url}
     [Return]  ${secret}
+
+Able To Delete An OIDC User
+    Switch to User Tag
+    Retry Element Click   ${user_test7_checkbox}
+    Retry Element Click   ${member_action_btn}
+    Retry Element Click   ${delete_btn}
+    Retry Element Click   ${confirm_delete_btn}
+    Retry Wait Until Page Not Contains Element   ${user_test7_checkbox}
+
+Should Contain Target User
+    Switch to User Tag
+    Retry Wait Until Page Contains Element  ${user_test7_row}

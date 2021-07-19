@@ -90,17 +90,17 @@ Test Case - Helm CLI Push
 
 Test Case - Onboard OIDC User Sign In
     Init Chrome Driver
-    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
+    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  is_oidc=${true}
     Check Automatic Onboarding And Save
     Logout Harbor
     Sign In Harbor With OIDC User  ${HARBOR_URL}  test8  is_onboard=${true}
     Logout Harbor
-	Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
+	Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  is_oidc=${true}
     Set User Name Claim And Save  email
     Logout Harbor
     Sign In Harbor With OIDC User  ${HARBOR_URL}  test9  is_onboard=${true}  username_claim=email
     Logout Harbor
-	Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
+	Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  is_oidc=${true}
     Set User Name Claim And Save  ${null}
     Sleep  2
     Close Browser
@@ -122,4 +122,20 @@ Test Case - OIDC Group User
     Sign In Harbor With OIDC User  ${HARBOR_URL}  username=${user}  password=${pwd}  login_with_provider=ldap
     ${output}=  Run Keyword And Ignore Error  Switch To Configure
     Should Be Equal As Strings  '${output[0]}'  'FAIL'
+    Close Browser
+
+
+Test Case - Delete An OIDC User In Local DB
+    Init Chrome Driver
+    # sign in with admin role
+    ${admin_user}=  Set Variable  admin_user
+    ${admin_pwd}=  Set Variable  zhu88jie
+    Sign In Harbor With OIDC User  ${HARBOR_URL}  username=${admin_user}  password=${admin_pwd}  login_with_provider=ldap
+    # shoule be able to delete an OIDC user
+    Able To Delete An OIDC User
+    # Re-sign in with the deleted user, will get it back
+    Sign In Harbor With OIDC User    ${HARBOR_URL}    test7
+    Sleep  2
+    Sign In Harbor With OIDC User  ${HARBOR_URL}  username=${admin_user}  password=${admin_pwd}  login_with_provider=ldap
+    Should Contain Target User
     Close Browser

@@ -137,7 +137,7 @@ func (u *usersAPI) ListUsers(ctx context.Context, params operation.ListUsersPara
 
 func (u *usersAPI) GetCurrentUserPermissions(ctx context.Context, params operation.GetCurrentUserPermissionsParams) middleware.Responder {
 	if err := u.RequireAuthenticated(ctx); err != nil {
-		u.SendError(ctx, err)
+		return u.SendError(ctx, err)
 	}
 	scope := ""
 	if params.Scope != nil {
@@ -393,14 +393,6 @@ func (u *usersAPI) requireDeletable(ctx context.Context, id int) error {
 	sctx, ok := security.FromContext(ctx)
 	if !ok || !sctx.IsAuthenticated() {
 		return errors.UnauthorizedError(nil)
-	}
-	a, err := u.getAuth(ctx)
-	if err != nil {
-		log.G(ctx).Errorf("Failed to get authmode, error: %v", err)
-		return err
-	}
-	if a != common.DBAuth {
-		return errors.ForbiddenError(nil).WithMessage("Deleting user is not allowed under auth mode: %s", a)
 	}
 	if !sctx.Can(ctx, rbac.ActionDelete, userResource) {
 		return errors.ForbiddenError(nil).WithMessage("Not authorized to delete users")
