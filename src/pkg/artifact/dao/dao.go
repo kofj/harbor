@@ -132,7 +132,7 @@ func (d *dao) Get(ctx context.Context, id int64) (*Artifact, error) {
 
 func (d *dao) GetByDigest(ctx context.Context, repository, digest string) (*Artifact, error) {
 	qs, err := orm.QuerySetter(ctx, &Artifact{}, &q.Query{
-		Keywords: map[string]interface{}{
+		Keywords: map[string]any{
 			"RepositoryName": repository,
 			"Digest":         digest,
 		},
@@ -146,7 +146,7 @@ func (d *dao) GetByDigest(ctx context.Context, repository, digest string) (*Arti
 	}
 	if len(artifacts) == 0 {
 		return nil, errors.New(nil).WithCode(errors.NotFoundCode).
-			WithMessage("artifact %s@%s not found", repository, digest)
+			WithMessagef("artifact %s@%s not found", repository, digest)
 	}
 	return artifacts[0], nil
 }
@@ -181,7 +181,7 @@ func (d *dao) Delete(ctx context.Context, id int64) error {
 		return err
 	}
 	if n == 0 {
-		return errors.NotFoundError(nil).WithMessage("artifact %d not found", id)
+		return errors.NotFoundError(nil).WithMessagef("artifact %d not found", id)
 	}
 
 	return nil
@@ -197,7 +197,7 @@ func (d *dao) Update(ctx context.Context, artifact *Artifact, props ...string) e
 		return err
 	}
 	if n == 0 {
-		return errors.NotFoundError(nil).WithMessage("artifact %d not found", artifact.ID)
+		return errors.NotFoundError(nil).WithMessagef("artifact %d not found", artifact.ID)
 	}
 	return nil
 }
@@ -212,7 +212,7 @@ func (d *dao) UpdatePullTime(ctx context.Context, id int64, pullTime time.Time) 
 	formatPullTime := pullTime.Format("2006-01-02 15:04:05.999999")
 	// update db only if pull_time is null or pull_time < (in-coming)pullTime
 	sql := "UPDATE artifact SET pull_time = ? WHERE id = ? AND (pull_time IS NULL OR pull_time < ?)"
-	args := []interface{}{formatPullTime, id, formatPullTime}
+	args := []any{formatPullTime, id, formatPullTime}
 
 	_, err = ormer.Raw(sql, args...).Exec()
 	if err != nil {
@@ -261,7 +261,7 @@ func (d *dao) DeleteReference(ctx context.Context, id int64) error {
 		return err
 	}
 	if n == 0 {
-		return errors.NotFoundError(nil).WithMessage("artifact reference %d not found", id)
+		return errors.NotFoundError(nil).WithMessagef("artifact reference %d not found", id)
 	}
 	return nil
 }
@@ -273,7 +273,7 @@ func (d *dao) DeleteReferences(ctx context.Context, parentID int64) error {
 		return err
 	}
 	qs, err := orm.QuerySetter(ctx, &ArtifactReference{}, &q.Query{
-		Keywords: map[string]interface{}{
+		Keywords: map[string]any{
 			"parent_id": parentID,
 		},
 	})
@@ -299,16 +299,16 @@ func (d *dao) ListWithLatest(ctx context.Context, query *q.Query) (artifacts []*
 	GROUP BY repository_name
 	) latest ON a.repository_name = latest.repository_name AND a.push_time = latest.latest_push_time`
 
-	queryParam := make([]interface{}, 0)
+	queryParam := make([]any, 0)
 	var ok bool
-	var pid interface{}
+	var pid any
 	if pid, ok = query.Keywords["ProjectID"]; !ok {
 		return nil, errors.New(nil).WithCode(errors.BadRequestCode).
 			WithMessage(`the value of "ProjectID" must be set`)
 	}
 	queryParam = append(queryParam, pid)
 
-	var attributionValue interface{}
+	var attributionValue any
 	if attributionValue, ok = query.Keywords["media_type"]; ok {
 		sql = fmt.Sprintf(sql, "media_type")
 	} else if attributionValue, ok = query.Keywords["artifact_type"]; ok {

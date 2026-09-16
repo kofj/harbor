@@ -213,7 +213,7 @@ func (suite *PutManifestMiddlewareTestSuite) TestResourcesExceeded() {
 		var errs quota.Errors
 		errs = errs.Add(quota.NewResourceOverflowError(types.ResourceStorage, 100, 100, 110))
 
-		err := errors.DeniedError(errs).WithMessage("Quota exceeded when processing the request of %v", errs)
+		err := errors.DeniedError(errs).WithMessagef("Quota exceeded when processing the request of %v", errs)
 		mock.OnAnything(suite.quotaController, "Request").Return(err).Once()
 
 		req := httptest.NewRequest(http.MethodPut, "/v2/library/photon/manifests/2.0", nil)
@@ -292,6 +292,26 @@ func (suite *PutManifestMiddlewareTestSuite) TestPutInvalid() {
 	PutManifestMiddleware()(next).ServeHTTP(rr, req)
 	suite.Equal(http.StatusBadRequest, rr.Code)
 
+}
+
+func (suite *PutManifestMiddlewareTestSuite) TestOverLimitManifestReturns413() {
+	mock.OnAnything(suite.quotaController, "IsEnabled").Return(true, nil)
+
+	// an over-limit body must surface as 413, not be re-wrapped into a
+	// MANIFEST_INVALID (400) by the quota middleware
+	unmarshalManifest = func(_ *http.Request) (distribution.Manifest, distribution.Descriptor, error) {
+		return nil, distribution.Descriptor{}, errors.RequestEntityTooLargeError(nil)
+	}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodPut, "/v2/library/photon/manifests/2.0", nil)
+	rr := httptest.NewRecorder()
+
+	PutManifestMiddleware()(next).ServeHTTP(rr, req)
+	suite.Equal(http.StatusRequestEntityTooLarge, rr.Code)
 }
 
 func TestPutManifestMiddlewareTestSuite(t *testing.T) {

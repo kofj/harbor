@@ -50,6 +50,10 @@ func newScanDataExportAPI() *scanDataExportAPI {
 	}
 }
 
+const (
+	defaultScanDataExportErrorStatusText = "The export job failed without reporting a reason; check the jobservice logs for details."
+)
+
 type scanDataExportAPI struct {
 	BaseAPI
 	scanDataExportCtl scandataexport.Controller
@@ -58,7 +62,7 @@ type scanDataExportAPI struct {
 	userMgr           user.Manager
 }
 
-func (se *scanDataExportAPI) Prepare(_ context.Context, _ string, _ interface{}) middleware.Responder {
+func (se *scanDataExportAPI) Prepare(_ context.Context, _ string, _ any) middleware.Responder {
 	return nil
 }
 
@@ -97,10 +101,6 @@ func (se *scanDataExportAPI) ExportScanData(ctx context.Context, params operatio
 
 	userContext := context.WithValue(ctx, export.CsvJobVendorIDKey, usr.UserID)
 
-	if err != nil {
-		return se.SendError(ctx, err)
-	}
-
 	jobID, err := se.scanDataExportCtl.Start(userContext, se.convertToCriteria(params.Criteria, secContext.GetUsername(), usr.UserID))
 	if err != nil {
 		return se.SendError(ctx, err)
@@ -134,9 +134,6 @@ func (se *scanDataExportAPI) GetScanDataExportExecution(ctx context.Context, par
 		return se.SendError(ctx, err)
 	}
 
-	if err != nil {
-		return se.SendError(ctx, err)
-	}
 	sdeExec := models.ScanDataExportExecution{
 		EndTime:     strfmt.DateTime(execution.EndTime),
 		ID:          execution.ID,
@@ -150,7 +147,7 @@ func (se *scanDataExportAPI) GetScanDataExportExecution(ctx context.Context, par
 	}
 	// add human friendly message when status is error
 	if sdeExec.Status == job.ErrorStatus.String() && sdeExec.StatusText == "" {
-		sdeExec.StatusText = "Please contact the system administrator to check the logs of jobservice."
+		sdeExec.StatusText = defaultScanDataExportErrorStatusText
 	}
 
 	return operation.NewGetScanDataExportExecutionOK().WithPayload(&sdeExec)
@@ -164,7 +161,7 @@ func (se *scanDataExportAPI) DownloadScanData(ctx context.Context, params operat
 	execution, err := se.scanDataExportCtl.GetExecution(ctx, params.ExecutionID)
 	if err != nil {
 		if notFound := orm.AsNotFoundError(err, "execution with id: %d not found", params.ExecutionID); notFound != nil {
-			return middleware.ResponderFunc(func(writer http.ResponseWriter, producer runtime.Producer) {
+			return middleware.ResponderFunc(func(writer http.ResponseWriter, _ runtime.Producer) {
 				writer.WriteHeader(http.StatusNotFound)
 			})
 		}
@@ -183,14 +180,14 @@ func (se *scanDataExportAPI) DownloadScanData(ctx context.Context, params operat
 	}
 
 	if secContext.GetUsername() != execution.UserName {
-		return middleware.ResponderFunc(func(writer http.ResponseWriter, producer runtime.Producer) {
+		return middleware.ResponderFunc(func(writer http.ResponseWriter, _ runtime.Producer) {
 			writer.WriteHeader(http.StatusForbidden)
 		})
 	}
 
 	// check if the CSV artifact for the execution exists
 	if !execution.FilePresent {
-		return middleware.ResponderFunc(func(writer http.ResponseWriter, producer runtime.Producer) {
+		return middleware.ResponderFunc(func(writer http.ResponseWriter, _ runtime.Producer) {
 			writer.WriteHeader(http.StatusNotFound)
 		})
 	}
@@ -202,7 +199,7 @@ func (se *scanDataExportAPI) DownloadScanData(ctx context.Context, params operat
 	}
 	log.Infof("reading data from file : %s", repositoryName)
 
-	return middleware.ResponderFunc(func(writer http.ResponseWriter, producer runtime.Producer) {
+	return middleware.ResponderFunc(func(writer http.ResponseWriter, _ runtime.Producer) {
 		defer se.cleanUpArtifact(ctx, repositoryName, execution.ExportDataDigest, params.ExecutionID, file)
 
 		writer.Header().Set("Content-Type", "text/csv")
@@ -247,7 +244,7 @@ func (se *scanDataExportAPI) GetScanDataExportExecutionList(ctx context.Context,
 		}
 		// add human friendly message when status is error
 		if sdeExec.Status == job.ErrorStatus.String() && sdeExec.StatusText == "" {
-			sdeExec.StatusText = "Please contact the system administrator to check the logs of jobservice."
+			sdeExec.StatusText = defaultScanDataExportErrorStatusText
 		}
 		// store project ids
 		for _, pid := range execution.ProjectIDs {

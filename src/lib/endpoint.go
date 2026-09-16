@@ -22,9 +22,9 @@ import (
 	"github.com/goharbor/harbor/src/lib/errors"
 )
 
-// ValidateHTTPURL checks whether the provided string is a valid HTTP URL.
+// NormalizeAndValidateHTTPURL checks whether the provided string is a valid HTTP URL and normalizes it.
 // If it is, return the URL in format "scheme://host:port" to avoid the SSRF
-func ValidateHTTPURL(s string) (string, error) {
+func NormalizeAndValidateHTTPURL(s string) (string, error) {
 	s = strings.Trim(s, " ")
 	s = strings.TrimRight(s, "/")
 	if len(s) == 0 {
@@ -35,11 +35,12 @@ func ValidateHTTPURL(s string) (string, error) {
 	}
 	url, err := url.Parse(s)
 	if err != nil {
-		return "", errors.New(nil).WithCode(errors.BadRequestCode).WithMessage("invalid URL: %s", err.Error())
+		return "", errors.New(nil).WithCode(errors.BadRequestCode).WithMessagef("invalid URL: %s", err.Error())
 	}
 	if url.Scheme != "http" && url.Scheme != "https" {
-		return "", errors.New(nil).WithCode(errors.BadRequestCode).WithMessage("invalid HTTP scheme: %s", url.Scheme)
+		return "", errors.New(nil).WithCode(errors.BadRequestCode).WithMessagef("invalid HTTP scheme: %s", url.Scheme)
 	}
 	// To avoid SSRF security issue, refer to #3755 for more detail
-	return fmt.Sprintf("%s://%s%s", url.Scheme, url.Host, url.Path), nil
+	// Normalize host to lowercase per RFC 1035 (preserving scheme & path casing)
+	return fmt.Sprintf("%s://%s%s", url.Scheme, strings.ToLower(url.Host), url.Path), nil
 }

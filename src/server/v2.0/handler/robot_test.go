@@ -1,15 +1,21 @@
 package handler
 
 import (
+	"context"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
 	"github.com/goharbor/harbor/src/common/rbac"
+	"github.com/goharbor/harbor/src/common/security"
 	"github.com/goharbor/harbor/src/controller/robot"
 	"github.com/goharbor/harbor/src/pkg/permission/types"
 	"github.com/goharbor/harbor/src/server/v2.0/models"
+	operation "github.com/goharbor/harbor/src/server/v2.0/restapi/operations/robot"
+	securitytesting "github.com/goharbor/harbor/src/testing/common/security"
 )
 
 func TestValidLevel(t *testing.T) {
@@ -135,6 +141,23 @@ func TestValidateName(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateNilPermissionElement(t *testing.T) {
+	rAPI := &robotAPI{}
+	err := rAPI.validate(-1, robot.LEVELSYSTEM, []*models.RobotPermission{nil})
+	assert.Error(t, err)
+}
+
+func TestValidateNilAccessElement(t *testing.T) {
+	rAPI := &robotAPI{}
+	err := rAPI.validate(-1, robot.LEVELSYSTEM, []*models.RobotPermission{
+		{
+			Kind:   robot.LEVELSYSTEM,
+			Access: []*models.Access{nil},
+		},
+	})
+	assert.Error(t, err)
 }
 
 func TestContainsAccess(t *testing.T) {
@@ -382,11 +405,126 @@ func TestValidPermissionScope(t *testing.T) {
 			},
 			expected: false,
 		},
+		{
+			name: "System - subset project",
+			creatingPerms: []*models.RobotPermission{
+				{
+					Kind:      "project",
+					Namespace: "test1",
+					Access: []*models.Access{
+						{Resource: "user", Action: "delete", Effect: "allow"},
+					},
+				},
+			},
+			creatorPerms: []*robot.Permission{
+				{
+					Kind:      "system",
+					Namespace: "/",
+					Access: []*types.Policy{
+						{Resource: "robot", Action: "create", Effect: "allow"},
+					},
+				},
+				{
+					Kind:      "project",
+					Namespace: "test1",
+					Access: []*types.Policy{
+						{Resource: "user", Action: "create", Effect: "allow"},
+						{Resource: "user", Action: "delete", Effect: "allow"},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "System - cover all",
+			creatingPerms: []*models.RobotPermission{
+				{
+					Kind:      "project",
+					Namespace: "test1",
+					Access: []*models.Access{
+						{Resource: "user", Action: "delete", Effect: "allow"},
+					},
+				},
+			},
+			creatorPerms: []*robot.Permission{
+				{
+					Kind:      "system",
+					Namespace: "/",
+					Access: []*types.Policy{
+						{Resource: "robot", Action: "create", Effect: "allow"},
+					},
+				},
+				{
+					Kind:      "project",
+					Namespace: "*",
+					Access: []*types.Policy{
+						{Resource: "user", Action: "create", Effect: "allow"},
+						{Resource: "user", Action: "delete", Effect: "allow"},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "System - cover all 2",
+			creatingPerms: []*models.RobotPermission{
+				{
+					Kind:      "project",
+					Namespace: "test1",
+					Access: []*models.Access{
+						{Resource: "user", Action: "update", Effect: "allow"},
+					},
+				},
+			},
+			creatorPerms: []*robot.Permission{
+				{
+					Kind:      "system",
+					Namespace: "/",
+					Access: []*types.Policy{
+						{Resource: "robot", Action: "create", Effect: "allow"},
+					},
+				},
+				{
+					Kind:      "project",
+					Namespace: "*",
+					Access: []*types.Policy{
+						{Resource: "user", Action: "create", Effect: "allow"},
+						{Resource: "user", Action: "delete", Effect: "allow"},
+					},
+				},
+			},
+			expected: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := isValidPermissionScope(tt.creatingPerms, tt.creatorPerms)
 			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestListRobotNonStringQueryValue(t *testing.T) {
+	queries := []string{
+		"Level=~system",
+		"Level=[1~2]",
+		"Level={a b}",
+		"Level=(a b)",
+		"Level=project,ProjectID=~1",
+		"Level=project,ProjectID=[1~2]",
+	}
+
+	secCtx := &securitytesting.Context{}
+	secCtx.On("IsAuthenticated").Return(true)
+	ctx := security.NewContext(context.Background(), secCtx)
+
+	for _, q := range queries {
+		t.Run(q, func(t *testing.T) {
+			responder := (&robotAPI{}).ListRobot(ctx, operation.ListRobotParams{Q: &q})
+
+			rec := httptest.NewRecorder()
+			responder.WriteResponse(rec, nil)
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
 		})
 	}
 }

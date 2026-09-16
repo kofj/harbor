@@ -18,6 +18,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/lib"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
@@ -33,8 +34,10 @@ func PutManifestMiddleware() func(http.Handler) http.Handler {
 		ctx := r.Context()
 		logger := log.G(ctx)
 
-		lib.NopCloseRequest(r) // make the r.Body re-readable
-		body, err := io.ReadAll(r.Body)
+		// bound the buffered manifest body; an over-limit body yields a 413
+		// rather than being parsed as a truncated (and misleadingly invalid)
+		// manifest
+		body, err := lib.ReadRequestBody(r, common.MaxManifestBodySize)
 		if err != nil {
 			return err
 		}
@@ -49,7 +52,7 @@ func PutManifestMiddleware() func(http.Handler) http.Handler {
 		return probeBlob(r, descriptor.Digest.String())
 	})
 
-	after := middleware.AfterResponse(func(w http.ResponseWriter, r *http.Request, statusCode int) error {
+	after := middleware.AfterResponse(func(_ http.ResponseWriter, r *http.Request, statusCode int) error {
 		if statusCode != http.StatusCreated {
 			return nil
 		}

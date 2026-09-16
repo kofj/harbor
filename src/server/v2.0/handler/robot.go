@@ -31,10 +31,8 @@ import (
 	"github.com/goharbor/harbor/src/common/utils"
 	"github.com/goharbor/harbor/src/controller/robot"
 	"github.com/goharbor/harbor/src/lib"
-	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
-	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/permission/types"
 	pkg "github.com/goharbor/harbor/src/pkg/robot/model"
 	"github.com/goharbor/harbor/src/server/v2.0/handler/model"
@@ -87,6 +85,12 @@ func (rAPI *robotAPI) CreateRobot(ctx context.Context, params operation.CreateRo
 	case *local.SecurityContext:
 		creatorRef = int64(s.User().UserID)
 	case *robotSc.SecurityContext:
+		if s.User() == nil {
+			return rAPI.SendError(ctx, errors.New(nil).WithMessage("invalid security context: empty robot account"))
+		}
+		if !isValidPermissionScope(params.Robot.Permissions, s.User().Permissions) {
+			return rAPI.SendError(ctx, errors.New(nil).WithMessagef("permission scope is invalid. It must be equal to or more restrictive than the creator robot's permissions: %s", s.User().Name).WithCode(errors.DENIED))
+		}
 		creatorRef = s.User().ID
 	default:
 		return rAPI.SendError(ctx, errors.New(nil).WithMessage("invalid security context"))
@@ -100,25 +104,6 @@ func (rAPI *robotAPI) CreateRobot(ctx context.Context, params operation.CreateRo
 
 	if err := robot.SetProject(ctx, r); err != nil {
 		return rAPI.SendError(ctx, err)
-	}
-
-	if _, ok := sc.(*robotSc.SecurityContext); ok {
-		creatorRobots, err := rAPI.robotCtl.List(ctx, q.New(q.KeyWords{
-			"name":       strings.TrimPrefix(sc.GetUsername(), config.RobotPrefix(ctx)),
-			"project_id": r.ProjectID,
-		}), &robot.Option{
-			WithPermission: true,
-		})
-		if err != nil {
-			return rAPI.SendError(ctx, err)
-		}
-		if len(creatorRobots) == 0 {
-			return rAPI.SendError(ctx, errors.DeniedError(nil))
-		}
-
-		if !isValidPermissionScope(params.Robot.Permissions, creatorRobots[0].Permissions) {
-			return rAPI.SendError(ctx, errors.New(nil).WithMessage("permission scope is invalid. It must be equal to or more restrictive than the creator robot's permissions: %s", creatorRobots[0].Name).WithCode(errors.DENIED))
-		}
 	}
 
 	rid, pwd, err := rAPI.robotCtl.Create(ctx, r)
@@ -177,22 +162,30 @@ func (rAPI *robotAPI) ListRobot(ctx context.Context, params operation.ListRobotP
 
 	var projectID int64
 	var level string
-	// GET /api/v2.0/robots or GET /api/v2.0/robots?level=system to get all of system level robots.
-	// GET /api/v2.0/robots?level=project&project_id=1
-	if _, ok := query.Keywords["Level"]; ok {
-		if !isValidLevel(query.Keywords["Level"].(string)) {
+	// GET /api/v2.0/robots or GET /api/v2.0/robots?q=Level=system to get all of system level robots.
+	// GET /api/v2.0/robots?q=Level=project,ProjectID=1
+	if lv, ok := query.Keywords["Level"]; ok {
+		levelStr, ok := lv.(string)
+		if !ok || !isValidLevel(levelStr) {
 			return rAPI.SendError(ctx, errors.New(nil).WithMessage("bad request error level input").WithCode(errors.BadRequestCode))
 		}
-		level = query.Keywords["Level"].(string)
+		level = levelStr
 		if level == robot.LEVELPROJECT {
-			if _, ok := query.Keywords["ProjectID"]; !ok {
+			pv, ok := query.Keywords["ProjectID"]
+			if !ok {
 				return rAPI.SendError(ctx, errors.BadRequestError(nil).WithMessage("must with project ID when to query project robots"))
 			}
-			pid, err := strconv.ParseInt(query.Keywords["ProjectID"].(string), 10, 64)
-			if err != nil {
-				return rAPI.SendError(ctx, errors.BadRequestError(nil).WithMessage("Project ID must be int type."))
+			pidStr, ok := pv.(string)
+			if !ok {
+				return rAPI.SendError(ctx, errors.BadRequestError(nil).WithMessage("ProjectID must be a positive integer"))
+			}
+			pid, err := strconv.ParseInt(pidStr, 10, 64)
+			if err != nil || pid <= 0 {
+				return rAPI.SendError(ctx, errors.BadRequestError(nil).WithMessage("ProjectID must be a positive integer"))
 			}
 			projectID = pid
+		} else if level == robot.LEVELSYSTEM {
+			query.Keywords["ProjectID"] = 0
 		}
 	} else {
 		level = robot.LEVELSYSTEM
@@ -316,7 +309,7 @@ func (rAPI *robotAPI) requireAccess(ctx context.Context, r *robot.Robot, action 
 	if r.Level == robot.LEVELSYSTEM {
 		return rAPI.RequireSystemAccess(ctx, action, rbac.ResourceRobot)
 	} else if r.Level == robot.LEVELPROJECT {
-		var ns interface{}
+		var ns any
 		if r.ProjectNameOrID != nil {
 			ns = r.ProjectNameOrID
 		} else if r.ProjectID > 0 {
@@ -333,11 +326,11 @@ func (rAPI *robotAPI) requireAccess(ctx context.Context, r *robot.Robot, action 
 // more validation
 func (rAPI *robotAPI) validate(d int64, level string, permissions []*models.RobotPermission) error {
 	if !isValidDuration(d) {
-		return errors.New(nil).WithMessage("bad request error duration input: %d, duration must be either -1(Never) or a positive integer", d).WithCode(errors.BadRequestCode)
+		return errors.New(nil).WithMessagef("bad request error duration input: %d, duration must be either -1(Never) or a positive integer", d).WithCode(errors.BadRequestCode)
 	}
 
 	if !isValidLevel(level) {
-		return errors.New(nil).WithMessage("bad request error level input: %s", level).WithCode(errors.BadRequestCode)
+		return errors.New(nil).WithMessagef("bad request error level input: %s", level).WithCode(errors.BadRequestCode)
 	}
 
 	if len(permissions) == 0 {
@@ -345,8 +338,16 @@ func (rAPI *robotAPI) validate(d int64, level string, permissions []*models.Robo
 	}
 
 	for _, perm := range permissions {
+		if perm == nil {
+			return errors.New(nil).WithMessage("bad request empty permission").WithCode(errors.BadRequestCode)
+		}
 		if len(perm.Access) == 0 {
 			return errors.New(nil).WithMessage("bad request empty access").WithCode(errors.BadRequestCode)
+		}
+		for _, acc := range perm.Access {
+			if acc == nil {
+				return errors.New(nil).WithMessage("bad request empty access").WithCode(errors.BadRequestCode)
+			}
 		}
 	}
 
@@ -362,18 +363,18 @@ func (rAPI *robotAPI) validate(d int64, level string, permissions []*models.Robo
 			polices := provider.GetPermissions(rbac.ScopeSystem)
 			for _, acc := range perm.Access {
 				if !containsAccess(polices, acc) {
-					return errors.New(nil).WithMessage("bad request permission: %s:%s", acc.Resource, acc.Action).WithCode(errors.BadRequestCode)
+					return errors.New(nil).WithMessagef("bad request permission: %s:%s", acc.Resource, acc.Action).WithCode(errors.BadRequestCode)
 				}
 			}
 		} else if perm.Kind == robot.LEVELPROJECT {
 			polices := provider.GetPermissions(rbac.ScopeProject)
 			for _, acc := range perm.Access {
 				if !containsAccess(polices, acc) {
-					return errors.New(nil).WithMessage("bad request permission: %s:%s", acc.Resource, acc.Action).WithCode(errors.BadRequestCode)
+					return errors.New(nil).WithMessagef("bad request permission: %s:%s", acc.Resource, acc.Action).WithCode(errors.BadRequestCode)
 				}
 			}
 		} else {
-			return errors.New(nil).WithMessage("bad request permission level: %s", perm.Kind).WithCode(errors.BadRequestCode)
+			return errors.New(nil).WithMessagef("bad request permission level: %s", perm.Kind).WithCode(errors.BadRequestCode)
 		}
 	}
 
@@ -418,42 +419,6 @@ func (rAPI *robotAPI) updateV2Robot(ctx context.Context, params operation.Update
 	if len(params.Robot.Permissions) != 0 {
 		if err := lib.JSONCopy(&r.Permissions, params.Robot.Permissions); err != nil {
 			log.Warningf("failed to call JSONCopy on robot permission when updateV2Robot, error: %v", err)
-		}
-	}
-
-	creatorRobot, err := rAPI.robotCtl.Get(ctx, r.CreatorRef, &robot.Option{
-		WithPermission: true,
-	})
-	if err != nil && !errors.IsErr(err, errors.NotFoundCode) {
-		return err
-	}
-
-	// for nested robot only
-	if creatorRobot != nil && r.CreatorType == "robot" {
-		sc, err := rAPI.GetSecurityContext(ctx)
-		if err != nil {
-			return err
-		}
-		if _, ok := sc.(*robotSc.SecurityContext); ok {
-			scRobots, err := rAPI.robotCtl.List(ctx, q.New(q.KeyWords{
-				"name":       strings.TrimPrefix(sc.GetUsername(), config.RobotPrefix(ctx)),
-				"project_id": r.ProjectID,
-			}), &robot.Option{
-				WithPermission: true,
-			})
-			if err != nil {
-				return err
-			}
-			if len(scRobots) == 0 {
-				return errors.DeniedError(nil)
-			}
-			if scRobots[0].ID != creatorRobot.ID && scRobots[0].ID != r.ID {
-				return errors.New(nil).WithMessage("as for a nested robot account, only person who has the right permission or the creator robot or nested robot itself has the permission to update").WithCode(errors.DENIED)
-			}
-		}
-
-		if !isValidPermissionScope(params.Robot.Permissions, creatorRobot.Permissions) {
-			return errors.New(nil).WithMessage("permission scope is invalid. It must be equal to or more restrictive than the creator robot's permissions: %s", creatorRobot.Name).WithCode(errors.DENIED)
 		}
 	}
 
@@ -517,11 +482,14 @@ func isValidPermissionScope(creating []*models.RobotPermission, creator []*robot
 
 	for _, pCreating := range creating {
 		key := fmt.Sprintf("%s:%s", pCreating.Kind, pCreating.Namespace)
-		creatingPerm, found := creatorMap[key]
+		creatorPerm, found := creatorMap[key]
 		if !found {
-			return false
+			allProjects := fmt.Sprintf("%s:*", pCreating.Kind)
+			if creatorPerm, found = creatorMap[allProjects]; !found {
+				return false
+			}
 		}
-		if !hasLessThanOrEqualAccess(pCreating.Access, creatingPerm.Access) {
+		if !hasLessThanOrEqualAccess(pCreating.Access, creatorPerm.Access) {
 			return false
 		}
 	}

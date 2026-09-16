@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
 
 	// quota driver
@@ -123,6 +123,7 @@ func flushQuota(ctx context.Context) {
 	iter, err := cache.Default().Scan(ctx, "quota:*")
 	if err != nil {
 		log.Errorf("failed to scan out the quota records from redis")
+		return
 	}
 
 	for iter.Next(ctx) {
@@ -279,7 +280,7 @@ func (c *controller) updateUsageByRedis(ctx context.Context, reference, referenc
 		// calc the quota usage in real time if no key found
 		if err == redis.Nil {
 			// use singleflight to prevent cache penetration and cause pressure on the database.
-			realQuota, err, _ := c.g.Do(key, func() (interface{}, error) {
+			realQuota, err, _ := c.g.Do(key, func() (any, error) {
 				return c.calcQuota(ctx, reference, referenceID)
 			})
 			if err != nil {
@@ -348,8 +349,13 @@ func (c *controller) updateUsageWithRetry(ctx context.Context, reference, refere
 
 	options := []retry.Option{
 		retry.Timeout(defaultRetryTimeout),
-		retry.Backoff(false),
-		retry.Callback(func(err error, sleep time.Duration) {
+		// Exponential backoff with jitter (the retry package default). With
+		// backoff disabled, every optimistic-lock loser re-reads and re-CASes
+		// the same quota_usage row in a zero-delay loop for up to
+		// defaultRetryTimeout, so N concurrent pushes to one project turn a
+		// single conflict into a synchronized retry storm on the database.
+		retry.Backoff(true),
+		retry.Callback(func(err error, _ time.Duration) {
 			log.G(ctx).Debugf("failed to update the quota usage for %s %s, error: %v", reference, referenceID, err)
 		}),
 	}
@@ -457,7 +463,9 @@ func (c *controller) Update(ctx context.Context, u *quota.Quota) error {
 
 	options := []retry.Option{
 		retry.Timeout(defaultRetryTimeout),
-		retry.Backoff(false),
+		// See updateUsageWithRetry: backoff+jitter desynchronizes writers
+		// contending on the single quota row.
+		retry.Backoff(true),
 	}
 
 	return retry.Retry(f, options...)
@@ -488,7 +496,7 @@ func reserveResources(resources types.ResourceList) func(hardLimits, used types.
 		newUsed := types.Add(used, resources)
 
 		if err := quota.IsSafe(hardLimits, used, newUsed, false); err != nil {
-			return nil, errors.DeniedError(err).WithMessage("Quota exceeded when processing the request of %v", err)
+			return nil, errors.DeniedError(err).WithMessagef("Quota exceeded when processing the request of %v", err)
 		}
 
 		return newUsed, nil
@@ -496,7 +504,7 @@ func reserveResources(resources types.ResourceList) func(hardLimits, used types.
 }
 
 func rollbackResources(resources types.ResourceList) func(hardLimits, used types.ResourceList) (types.ResourceList, error) {
-	return func(hardLimits, used types.ResourceList) (types.ResourceList, error) {
+	return func(_, used types.ResourceList) (types.ResourceList, error) {
 		newUsed := types.Subtract(used, resources)
 		// ensure that new used is never negative
 		if negativeUsed := types.IsNegative(newUsed); len(negativeUsed) > 0 {

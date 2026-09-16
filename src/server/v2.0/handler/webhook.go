@@ -53,11 +53,11 @@ type webhookAPI struct {
 	webhookCtl webhook_ctl.Controller
 }
 
-func (n *webhookAPI) Prepare(_ context.Context, _ string, _ interface{}) middleware.Responder {
+func (n *webhookAPI) Prepare(_ context.Context, _ string, _ any) middleware.Responder {
 	return nil
 }
 
-func (n *webhookAPI) requirePolicyInProject(ctx context.Context, projectIDOrName interface{}, policyID int64) error {
+func (n *webhookAPI) requirePolicyInProject(ctx context.Context, projectIDOrName any, policyID int64) error {
 	projectID, err := getProjectID(ctx, projectIDOrName)
 	if err != nil {
 		return err
@@ -151,7 +151,7 @@ func (n *webhookAPI) CreateWebhookPolicyOfProject(ctx context.Context, params we
 	if ok, err := n.validateEventTypes(policy); !ok {
 		return n.SendError(ctx, err)
 	}
-	if ok, err := n.validateTargets(policy); !ok {
+	if ok, err := n.normalizeAndValidateTargets(policy); !ok {
 		return n.SendError(ctx, err)
 	}
 
@@ -190,7 +190,7 @@ func (n *webhookAPI) UpdateWebhookPolicyOfProject(ctx context.Context, params we
 	if ok, err := n.validateEventTypes(policy); !ok {
 		return n.SendError(ctx, err)
 	}
-	if ok, err := n.validateTargets(policy); !ok {
+	if ok, err := n.normalizeAndValidateTargets(policy); !ok {
 		return n.SendError(ctx, err)
 	}
 
@@ -402,20 +402,20 @@ func (n *webhookAPI) GetSupportedEventTypes(ctx context.Context, params webhook.
 	return webhook.NewGetSupportedEventTypesOK().WithPayload(notificationTypes)
 }
 
-func (n *webhookAPI) validateTargets(policy *policy_model.Policy) (bool, error) {
+func (n *webhookAPI) normalizeAndValidateTargets(policy *policy_model.Policy) (bool, error) {
 	if len(policy.Targets) == 0 {
-		return false, errors.New(nil).WithMessage("empty notification target with policy %s", policy.Name).WithCode(errors.BadRequestCode)
+		return false, errors.New(nil).WithMessagef("empty notification target with policy %s", policy.Name).WithCode(errors.BadRequestCode)
 	}
 	for i, target := range policy.Targets {
 		url, err := utils.ParseEndpoint(target.Address)
 		if err != nil {
 			return false, errors.New(err).WithCode(errors.BadRequestCode)
 		}
-		// Prevent SSRF security issue #3755
-		target.Address = url.Scheme + "://" + url.Host + url.Path
+		// Prevent SSRF security issue #3755 and normalize host per RFC 1035
+		target.Address = url.Scheme + "://" + strings.ToLower(url.Host) + url.Path
 
 		if !isNotifyTypeSupported(target.Type) {
-			return false, errors.New(nil).WithMessage("unsupported target type %s with policy %s", target.Type, policy.Name).WithCode(errors.BadRequestCode)
+			return false, errors.New(nil).WithMessagef("unsupported target type %s with policy %s", target.Type, policy.Name).WithCode(errors.BadRequestCode)
 		}
 		// don't allow set the payload format for slack type
 		// slack should be migrated as a kind of payload in the future
@@ -424,7 +424,7 @@ func (n *webhookAPI) validateTargets(policy *policy_model.Policy) (bool, error) 
 		}
 
 		if len(target.PayloadFormat) > 0 && !isPayloadFormatSupported(target.PayloadFormat) {
-			return false, errors.New(nil).WithMessage("unsupported payload format type: %s", target.PayloadFormat).WithCode(errors.BadRequestCode)
+			return false, errors.New(nil).WithMessagef("unsupported payload format type: %s", target.PayloadFormat).WithCode(errors.BadRequestCode)
 		}
 		// set payload format to Default is not specified when the type is http
 		if len(target.PayloadFormat) == 0 && target.Type == "http" {
@@ -440,7 +440,7 @@ func (n *webhookAPI) validateEventTypes(policy *policy_model.Policy) (bool, erro
 	}
 	for _, eventType := range policy.EventTypes {
 		if !isEventTypeSupported(eventType) {
-			return false, errors.New(nil).WithMessage("unsupported event type %s", eventType).WithCode(errors.BadRequestCode)
+			return false, errors.New(nil).WithMessagef("unsupported event type %s", eventType).WithCode(errors.BadRequestCode)
 		}
 	}
 	return true, nil

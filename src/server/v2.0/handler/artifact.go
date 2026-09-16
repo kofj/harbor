@@ -73,7 +73,7 @@ type artifactAPI struct {
 	labelMgr label.Manager
 }
 
-func (a *artifactAPI) Prepare(ctx context.Context, _ string, params interface{}) middleware.Responder {
+func (a *artifactAPI) Prepare(ctx context.Context, _ string, params any) middleware.Responder {
 	if err := unescapePathParams(params, "RepositoryName"); err != nil {
 		a.SendError(ctx, err)
 	}
@@ -85,17 +85,21 @@ func (a *artifactAPI) ListArtifacts(ctx context.Context, params operation.ListAr
 	if err := a.RequireProjectAccess(ctx, params.ProjectName, rbac.ActionList, rbac.ResourceArtifact); err != nil {
 		return a.SendError(ctx, err)
 	}
+	repositoryName := fmt.Sprintf("%s/%s", params.ProjectName, params.RepositoryName)
+	if _, err := a.repoCtl.GetByName(ctx, repositoryName); err != nil {
+		return a.SendError(ctx, err)
+	}
 
 	// set query
 	query, err := a.BuildQuery(ctx, params.Q, params.Sort, params.Page, params.PageSize)
 	if err != nil {
 		return a.SendError(ctx, err)
 	}
-	query.Keywords["RepositoryName"] = fmt.Sprintf("%s/%s", params.ProjectName, params.RepositoryName)
+	query.Keywords["RepositoryName"] = repositoryName
 
 	// set option
 	option := option(params.WithTag, params.WithImmutableStatus,
-		params.WithLabel, params.WithAccessory, nil)
+		params.WithLabel, params.WithAccessory, nil, params.WithInheritedAccessory)
 
 	// get the total count of artifacts
 	total, err := a.artCtl.Count(ctx, query)
@@ -129,7 +133,7 @@ func (a *artifactAPI) GetArtifact(ctx context.Context, params operation.GetArtif
 	}
 	// set option
 	option := option(params.WithTag, params.WithImmutableStatus,
-		params.WithLabel, params.WithAccessory, nil)
+		params.WithLabel, params.WithAccessory, nil, params.WithInheritedAccessory)
 
 	// get the artifact
 	artifact, err := a.artCtl.GetByReference(ctx, fmt.Sprintf("%s/%s", params.ProjectName, params.RepositoryName), params.Reference, option)
@@ -212,7 +216,7 @@ func parse(s string) (string, string, error) {
 	matches := reference.ReferenceRegexp.FindStringSubmatch(s)
 	if matches == nil {
 		return "", "", errors.New(nil).WithCode(errors.BadRequestCode).
-			WithMessage("invalid input: %s", s)
+			WithMessagef("invalid input: %s", s)
 	}
 	repository := matches[1]
 	reference := matches[2]
@@ -220,7 +224,7 @@ func parse(s string) (string, string, error) {
 		_, err := digest.Parse(matches[3])
 		if err != nil {
 			return "", "", errors.New(nil).WithCode(errors.BadRequestCode).
-				WithMessage("invalid input: %s", s)
+				WithMessagef("invalid input: %s", s)
 		}
 		reference = matches[3]
 	}
@@ -238,7 +242,8 @@ func (a *artifactAPI) CreateTag(ctx context.Context, params operation.CreateTagP
 
 	art, err := a.artCtl.GetByReference(ctx, fmt.Sprintf("%s/%s", params.ProjectName, params.RepositoryName),
 		params.Reference, &artifact.Option{
-			WithTag: true,
+			WithTag:   true,
+			WithLabel: true,
 		})
 	if err != nil {
 		return a.SendError(ctx, err)
@@ -256,6 +261,7 @@ func (a *artifactAPI) CreateTag(ctx context.Context, params operation.CreateTagP
 	notification.AddEvent(ctx, &metadata.CreateTagEventMetadata{
 		Ctx:              ctx,
 		Tag:              tag.Name,
+		Labels:           art.AbstractLabelNames(),
 		AttachedArtifact: &art.Artifact,
 	})
 
@@ -270,7 +276,7 @@ func (a *artifactAPI) requireNonProxyCacheProject(ctx context.Context, name stri
 	}
 	if pro.IsProxy() {
 		return errors.New(nil).WithCode(errors.MethodNotAllowedCode).
-			WithMessage("the operation isn't supported for a proxy cache project")
+			WithMessagef("the operation isn't supported for a proxy cache project")
 	}
 	return nil
 }
@@ -281,7 +287,8 @@ func (a *artifactAPI) DeleteTag(ctx context.Context, params operation.DeleteTagP
 	}
 	artifact, err := a.artCtl.GetByReference(ctx, fmt.Sprintf("%s/%s", params.ProjectName, params.RepositoryName),
 		params.Reference, &artifact.Option{
-			WithTag: true,
+			WithTag:   true,
+			WithLabel: true,
 		})
 	if err != nil {
 		return a.SendError(ctx, err)
@@ -295,7 +302,7 @@ func (a *artifactAPI) DeleteTag(ctx context.Context, params operation.DeleteTagP
 	}
 	// the tag not found
 	if id == 0 {
-		err = errors.New(nil).WithCode(errors.NotFoundCode).WithMessage(
+		err = errors.New(nil).WithCode(errors.NotFoundCode).WithMessagef(
 			"tag %s attached to artifact %d not found", params.TagName, artifact.ID)
 		return a.SendError(ctx, err)
 	}
@@ -307,6 +314,7 @@ func (a *artifactAPI) DeleteTag(ctx context.Context, params operation.DeleteTagP
 	notification.AddEvent(ctx, &metadata.DeleteTagEventMetadata{
 		Ctx:              ctx,
 		Tag:              params.TagName,
+		Labels:           artifact.AbstractLabelNames(),
 		AttachedArtifact: &artifact.Artifact,
 	})
 
@@ -402,7 +410,7 @@ func (a *artifactAPI) GetVulnerabilitiesAddition(ctx context.Context, params ope
 		return a.SendError(ctx, err)
 	}
 
-	vulnerabilities := make(map[string]interface{})
+	vulnerabilities := make(map[string]any)
 
 	for _, mimeType := range parseScanReportMimeTypes(params.XAcceptVulnerabilities) {
 		reports, err := a.scanCtl.GetReport(ctx, artifact, []string{mimeType})
@@ -428,7 +436,7 @@ func (a *artifactAPI) GetVulnerabilitiesAddition(ctx context.Context, params ope
 
 	content, _ := json.Marshal(vulnerabilities)
 
-	return middleware.ResponderFunc(func(w http.ResponseWriter, p runtime.Producer) {
+	return middleware.ResponderFunc(func(w http.ResponseWriter, _ runtime.Producer) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(content)
 	})
@@ -449,7 +457,7 @@ func (a *artifactAPI) GetAddition(ctx context.Context, params operation.GetAddit
 		return a.SendError(ctx, err)
 	}
 
-	return middleware.ResponderFunc(func(w http.ResponseWriter, p runtime.Producer) {
+	return middleware.ResponderFunc(func(w http.ResponseWriter, _ runtime.Producer) {
 		w.Header().Set("Content-Type", addition.ContentType)
 		_, _ = w.Write(addition.Content)
 	})
@@ -496,17 +504,20 @@ func (a *artifactAPI) RequireLabelInProject(ctx context.Context, projectID, labe
 		return err
 	}
 	if l.Scope == common.LabelScopeProject && l.ProjectID != projectID {
-		return errors.NotFoundError(nil).WithMessage("project id %d, label %d not found", projectID, labelID)
+		return errors.NotFoundError(nil).WithMessagef("project id %d, label %d not found", projectID, labelID)
 	}
 	return nil
 }
 
-func option(withTag, withImmutableStatus, withLabel, withAccessory *bool, latestInRepository *bool) *artifact.Option {
+func option(withTag, withImmutableStatus, withLabel, withAccessory *bool, latestInRepository *bool, withInheritedAccessory *bool) *artifact.Option {
 	option := &artifact.Option{
-		WithTag:            true, // return the tag by default
-		WithLabel:          lib.BoolValue(withLabel),
-		WithAccessory:      true, // return the accessory by default
-		LatestInRepository: lib.BoolValue(latestInRepository),
+		WithTag:       true, // return the tag by default
+		WithLabel:     lib.BoolValue(withLabel),
+		WithAccessory: true, // return the accessory by default
+		// the inherited accessories cost an extra reference lookup per artifact, so unlike
+		// the accessories they are opt-in rather than returned by default
+		WithInheritedAccessory: lib.BoolValue(withInheritedAccessory),
+		LatestInRepository:     lib.BoolValue(latestInRepository),
 	}
 
 	if withTag != nil {
